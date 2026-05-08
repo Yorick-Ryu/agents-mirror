@@ -1,0 +1,27 @@
+name = "claude-code-mirror"
+main = "src/index.js"
+compatibility_date = "2026-05-08"
+account_id = "4e528d4c6e70aee6dd9fec89af0e0522"
+
+workers_dev = false
+
+routes = [
+  { pattern = "claude.beiapi.cn/*", zone_name = "beiapi.cn" }
+]
+
+triggers = { crons = ["20 4 * * *"] }
+
+[[r2_buckets]]
+binding = "CLAUDE_RELEASES"
+bucket_name = "claude-code-releases"
+
+[vars]
+PUBLIC_BASE_URL = "https://claude.beiapi.cn"
+DOWNLOAD_BASE_URL = "https://download.beiapi.cn/claude-code-releases"
+R2_BASE_URL = "https://download.beiapi.cn"
+UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"
+NPM_REGISTRY_BASE_URL = "https://registry.npmjs.org"
+NODE_DIST_BASE_URL = "https://nodejs.org/dist"
+NODE_VERSION = "v24.15.0"
+PLATFORMS = "win32-x64,win32-arm64"
+PART_SIZE = "16777216"

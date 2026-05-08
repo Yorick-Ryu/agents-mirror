@@ -1,0 +1,12 @@
+{
+  "name": "claude-code-r2-worker",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "dev": "wrangler dev --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.90.0"
+  }
+}
