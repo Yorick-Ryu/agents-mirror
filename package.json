@@ -1,5 +1,5 @@
 {
-  "name": "claude-code-r2-worker",
+  "name": "agents-mirror",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",

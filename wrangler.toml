@@ -1,4 +1,4 @@
-name = "claude-code-mirror"
+name = "agents-mirror"
 main = "src/index.js"
 compatibility_date = "2026-05-08"
 account_id = "4e528d4c6e70aee6dd9fec89af0e0522"
