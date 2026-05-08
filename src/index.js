@@ -408,6 +408,7 @@ $DOWNLOAD_DIR = "$env:USERPROFILE\.claude\downloads"
 $NODE_ROOT = "$env:USERPROFILE\.claude\node"
 $NPM_PREFIX = "$env:USERPROFILE\.claude\local"
 $CLAUDE_BASE_URL = $BaseUrl.TrimEnd('/')
+$MIN_NODE_MAJOR = 18
 
 if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     $platform = "win32-arm64"
@@ -422,7 +423,27 @@ $version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/latest" -ErrorAction Stop
 
 Write-Output "Latest version: $version"
 
-Write-Output "Preparing Node.js portable runtime..."
+function Get-CommandSource($name) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    return $null
+}
+
+function Get-NodeMajorVersion($nodePath) {
+    try {
+        $versionText = (& $nodePath -v).ToString().Trim()
+        if ($versionText -match '^v?(\d+)\.') {
+            return [int]$Matches[1]
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
 if ($platform -eq "win32-arm64") {
     $nodeArch = "win-arm64"
 } else {
@@ -431,29 +452,56 @@ if ($platform -eq "win32-arm64") {
 $nodeDir = "$NODE_ROOT\node-$NODE_VERSION-$nodeArch"
 $nodeZip = "$DOWNLOAD_DIR\node-$NODE_VERSION-$nodeArch.zip"
 $nodeUri = "$R2_BASE_URL/node/$NODE_VERSION/node-$NODE_VERSION-$nodeArch.zip"
+$systemNode = Get-CommandSource "node.exe"
+if (-not $systemNode) {
+    $systemNode = Get-CommandSource "node"
+}
+$systemNpm = Get-CommandSource "npm.cmd"
+if (-not $systemNpm) {
+    $systemNpm = Get-CommandSource "npm"
+}
+$nodeExe = $null
+$npmCmd = $null
 
-if (-not (Test-Path "$nodeDir\node.exe")) {
-    New-Item -ItemType Directory -Force -Path $NODE_ROOT | Out-Null
-    if (Test-Path $nodeZip) {
-        Remove-Item -Force $nodeZip
-    }
-    Write-Output "Downloading Node.js from $nodeUri"
-    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        & curl.exe -4 -L --fail --progress-bar $nodeUri -o $nodeZip
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "curl.exe failed with exit code $LASTEXITCODE; falling back to Invoke-WebRequest."
-            Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
-        }
+if ($systemNode -and $systemNpm) {
+    $systemNodeMajor = Get-NodeMajorVersion $systemNode
+    if ($null -ne $systemNodeMajor -and $systemNodeMajor -ge $MIN_NODE_MAJOR) {
+        $nodeExe = $systemNode
+        $npmCmd = $systemNpm
+        Write-Output "Using existing Node.js runtime: $nodeExe"
+        Write-Output "Using existing npm: $npmCmd"
     } else {
-        Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
+        Write-Output "Existing Node.js is missing or older than required major version $MIN_NODE_MAJOR; portable runtime will be used."
     }
-    Write-Output "Extracting Node.js..."
-    Expand-Archive -Path $nodeZip -DestinationPath $NODE_ROOT -Force
+} else {
+    Write-Output "Existing Node.js/npm was not found; portable runtime will be used."
 }
 
-$env:Path = "$nodeDir;$nodeDir\node_modules\npm\bin;$env:Path"
-$nodeExe = "$nodeDir\node.exe"
-$npmCmd = "$nodeDir\npm.cmd"
+if (-not $nodeExe -or -not $npmCmd) {
+    Write-Output "Preparing Node.js portable runtime..."
+    if (-not (Test-Path "$nodeDir\node.exe")) {
+        New-Item -ItemType Directory -Force -Path $NODE_ROOT | Out-Null
+        if (Test-Path $nodeZip) {
+            Remove-Item -Force $nodeZip
+        }
+        Write-Output "Downloading Node.js from $nodeUri"
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -4 -L --fail --progress-bar $nodeUri -o $nodeZip
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "curl.exe failed with exit code $LASTEXITCODE; falling back to Invoke-WebRequest."
+                Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
+            }
+        } else {
+            Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
+        }
+        Write-Output "Extracting Node.js..."
+        Expand-Archive -Path $nodeZip -DestinationPath $NODE_ROOT -Force
+    }
+
+    $env:Path = "$nodeDir;$nodeDir\node_modules\npm\bin;$env:Path"
+    $nodeExe = "$nodeDir\node.exe"
+    $npmCmd = "$nodeDir\npm.cmd"
+}
 
 if (-not (Test-Path $nodeExe) -or -not (Test-Path $npmCmd)) {
     Write-Error "Node.js portable runtime was not installed correctly."

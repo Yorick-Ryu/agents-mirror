@@ -32,6 +32,14 @@ node/{node_version}/*.zip
 node/latest
 ```
 
+安装脚本会先检查 Windows 本机是否已经有可用的 Node.js 和 npm。当前判断规则：
+
+- Claude Code 当前 npm 包要求 `node >=18.0.0`。
+- Codex CLI 当前 npm 包要求 `node >=16`。
+- 为同时兼容两者，安装脚本要求本机 `node >=18` 且能找到 npm。
+- 满足要求时直接复用本机 Node.js/npm，不下载便携 Node.js。
+- 不满足要求或找不到 npm 时，才从 R2 下载 `node/{node_version}/*.zip`。
+
 ## 前置条件
 
 你需要准备：
@@ -250,7 +258,7 @@ curl -I https://download.example.com/claude-code-releases/2.1.133/manifest.json
 
 ```bash
 curl -s https://claude.example.com/install.ps1 |
-  grep -E 'DOWNLOAD_BASE_URL|R2_BASE_URL|ANTHROPIC_BASE_URL|DISABLE_AUTOUPDATER'
+  grep -E 'DOWNLOAD_BASE_URL|R2_BASE_URL|ANTHROPIC_BASE_URL|DISABLE_AUTOUPDATER|MIN_NODE_MAJOR'
 ```
 
 Windows 直接安装：
