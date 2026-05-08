@@ -140,6 +140,13 @@ curl -s https://claude.beiapi.cn/install.ps1 |
   rg -n "DOWNLOAD_BASE_URL|R2_BASE_URL|ANTHROPIC_BASE_URL|DISABLE_AUTOUPDATER|MIN_NODE_MAJOR"
 ```
 
+Check upgrade script markers:
+
+```bash
+curl -s https://claude.beiapi.cn/upgrade.ps1 |
+  rg -n "No Claude settings were changed|Get-RequiredCommand|MIN_NODE_MAJOR"
+```
+
 Check uninstaller markers:
 
 ```bash
@@ -157,6 +164,12 @@ Windows install with custom base URL and API key:
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/install.ps1))) -BaseUrl "https://api.example.com" -ApiKey "YOUR_API_KEY"
+```
+
+Windows upgrade only:
+
+```powershell
+irm https://claude.beiapi.cn/upgrade.ps1 | iex
 ```
 
 ## Troubleshooting

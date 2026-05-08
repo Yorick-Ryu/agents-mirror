@@ -24,6 +24,12 @@ export default {
       });
     }
 
+    if (url.pathname === "/upgrade.ps1" || url.pathname === "/claude/upgrade.ps1") {
+      return new Response(renderUpgradeScript(env), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
     if (url.pathname === "/uninstall.ps1" || url.pathname === "/claude/uninstall.ps1") {
       return new Response(renderUninstallScript(), {
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
@@ -595,6 +601,87 @@ if ($ApiKey) {
     Write-Output "API key was not provided; existing key, if any, was left unchanged."
 }
 Write-Output ""
+`;
+}
+
+function renderUpgradeScript(env) {
+  const downloadBase = env.DOWNLOAD_BASE_URL || DEFAULT_DOWNLOAD_BASE;
+  const r2Base = env.R2_BASE_URL || DEFAULT_R2_BASE;
+  return String.raw`Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$ProgressPreference = 'Continue'
+
+$DOWNLOAD_BASE_URL = "${downloadBase}"
+$R2_BASE_URL = "${r2Base}"
+$MIN_NODE_MAJOR = 18
+
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+    $platform = "win32-arm64"
+} else {
+    $platform = "win32-x64"
+}
+
+function Get-RequiredCommand($name, $message) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        Write-Error $message
+        exit 1
+    }
+    return $cmd.Source
+}
+
+function Get-NodeMajorVersion($nodePath) {
+    try {
+        $versionText = (& $nodePath -v).ToString().Trim()
+        if ($versionText -match '^v?(\d+)\.') {
+            return [int]$Matches[1]
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+$claudeCmd = Get-RequiredCommand "claude" "Claude Code was not found in the current PATH. Run the install script first, then open a new PowerShell session."
+$nodeExe = Get-RequiredCommand "node" "Node.js was not found in the current PATH. The upgrade script does not install Node.js; run the install script first."
+$npmCmd = Get-RequiredCommand "npm" "npm was not found in the current PATH. The upgrade script does not install npm; run the install script first."
+
+$nodeMajor = Get-NodeMajorVersion $nodeExe
+if ($null -eq $nodeMajor -or $nodeMajor -lt $MIN_NODE_MAJOR) {
+    Write-Error "Node.js major version $MIN_NODE_MAJOR or newer is required. Found: $(& $nodeExe -v)"
+    exit 1
+}
+
+$NPM_PREFIX = Split-Path -Parent $claudeCmd
+if (-not (Test-Path $NPM_PREFIX)) {
+    Write-Error "Could not determine npm prefix from Claude command: $claudeCmd"
+    exit 1
+}
+
+Write-Output "Checking latest Claude Code version from mirror..."
+$version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/latest" -ErrorAction Stop).ToString().Trim()
+Write-Output "Latest version: $version"
+Write-Output "Current Claude command: $claudeCmd"
+Write-Output "Using npm prefix: $NPM_PREFIX"
+
+$wrapperTgz = "$R2_BASE_URL/npm/$version/claude-code-$version.tgz"
+if ($platform -eq "win32-arm64") {
+    $nativeTgz = "$R2_BASE_URL/npm/$version/claude-code-win32-arm64-$version.tgz"
+} else {
+    $nativeTgz = "$R2_BASE_URL/npm/$version/claude-code-win32-x64-$version.tgz"
+}
+
+Write-Output "Upgrading Claude Code npm packages..."
+& $npmCmd install -g --prefix $NPM_PREFIX --omit=optional $nativeTgz $wrapperTgz
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "npm install failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
+
+Write-Output ""
+Write-Output "Claude Code upgrade complete."
+Write-Output "No Claude settings were changed."
 `;
 }
 
