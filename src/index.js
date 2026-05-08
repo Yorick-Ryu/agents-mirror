@@ -386,6 +386,9 @@ function renderInstallScript(env) {
   const nodeVersion = env.NODE_VERSION || DEFAULT_NODE_VERSION;
   return String.raw`param(
     [Parameter()]
+    [string]$BaseUrl = "https://api.beiapi.cn",
+
+    [Parameter()]
     [string]$ApiKey
 )
 
@@ -404,7 +407,7 @@ $NODE_VERSION = "${nodeVersion}"
 $DOWNLOAD_DIR = "$env:USERPROFILE\.claude\downloads"
 $NODE_ROOT = "$env:USERPROFILE\.claude\node"
 $NPM_PREFIX = "$env:USERPROFILE\.claude\local"
-$CLAUDE_BASE_URL = "https://api.beiapi.cn"
+$CLAUDE_BASE_URL = $BaseUrl.TrimEnd('/')
 
 if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
     $platform = "win32-arm64"

@@ -265,6 +265,18 @@ Windows 安装并写入 API Key：
 & ([scriptblock]::Create((irm https://claude.example.com/install.ps1))) -ApiKey "YOUR_API_KEY"
 ```
 
+Windows 安装并指定自定义 Claude API Base URL：
+
+```powershell
+& ([scriptblock]::Create((irm https://claude.example.com/install.ps1))) -BaseUrl "https://api.example.com" -ApiKey "YOUR_API_KEY"
+```
+
+`-BaseUrl` 可以省略。省略时默认写入：
+
+```text
+https://api.beiapi.cn
+```
+
 Windows 卸载：
 
 ```powershell
