@@ -1,26 +1,26 @@
-# Agents Mirror
+# 国内环境下 Windows 一键安装 Claude Code 脚本及部署教程
 
 Agents Mirror 是一个基于 Cloudflare Worker + R2 的 AI 编程 Agent 工具镜像服务。
 
-当前已实现的镜像目标是 Windows 版 Claude Code。仓库名称保持通用，后续可以继续加入 Codex 等其他工具镜像，共用同一个 Worker、下载域名和维护流程。
+目前支持状态：仅支持 Windows 版 Claude Code。
 
-## 脚本使用方法
+## 一、使用我们部署好的脚本
 
 以下命令在 Windows PowerShell 中运行。
 
-直接安装：
+### 直接安装
 
 ```powershell
 irm https://claude.beiapi.cn/install.ps1 | iex
 ```
 
-安装并写入 API Key：
+### 安装并写入 API Key
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/install.ps1))) -ApiKey "YOUR_API_KEY"
 ```
 
-安装并指定自定义 Claude API Base URL：
+### 安装并指定自定义 Claude API Base URL
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/install.ps1))) -BaseUrl "https://api.example.com" -ApiKey "YOUR_API_KEY"
@@ -32,7 +32,7 @@ irm https://claude.beiapi.cn/install.ps1 | iex
 https://api.beiapi.cn
 ```
 
-只升级 Claude Code，不修改配置：
+### 只升级 Claude Code
 
 ```powershell
 irm https://claude.beiapi.cn/upgrade.ps1 | iex
@@ -40,62 +40,44 @@ irm https://claude.beiapi.cn/upgrade.ps1 | iex
 
 升级脚本只会执行 npm 包升级，不会写入或修改 `settings.json`。如果当前 PowerShell 环境里找不到 `claude`、`node` 或 `npm`，或者 Node.js 版本低于 18，会直接报错退出。首次安装请使用 `install.ps1`。
 
-卸载，保留配置：
+### 卸载，保留配置
 
 ```powershell
 irm https://claude.beiapi.cn/uninstall.ps1 | iex
 ```
 
-卸载并删除 `settings.json`：
+### 卸载并删除 `settings.json`
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/uninstall.ps1))) -RemoveSettings
 ```
 
-卸载并删除 `settings.json` 以及备份文件：
+### 卸载并删除 `settings.json` 以及备份文件
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/uninstall.ps1))) -RemoveSettings -RemoveBackups
 ```
 
-## 部署后提供什么
+### 当前脚本说明
 
-服务包含两个公开域名：
+安装脚本会先检查 Windows 本机是否已经有可用的 Node.js 和 npm：
+
+- Claude Code 当前 npm 包要求 `node >=18.0.0`。
+- Codex CLI 当前 npm 包要求 `node >=16`。
+- 为后续兼容，安装脚本要求本机 `node >=18` 且能找到 npm。
+- 满足要求时直接复用本机 Node.js/npm，不下载便携 Node.js。
+- 不满足要求或找不到 npm 时，才从 R2 下载 `node/{node_version}/*.zip`。
+
+当前线上域名：
 
 - Worker 入口域名：`https://claude.beiapi.cn`
 - R2 下载域名：`https://download.beiapi.cn`
 
-Worker 提供这些接口：
+## 二、如何自己部署？
 
-- `GET /install.ps1`
-- `GET /upgrade.ps1`
-- `GET /uninstall.ps1`
-- `GET /admin/status`
-- `POST /admin/sync`
-- `GET /claude-code-releases/*`
+这一部分说明如何用 Cloudflare Worker + R2 自己搭建同样的镜像服务。
 
-R2 里存放镜像文件：
-
-```text
-claude-code-releases/latest
-claude-code-releases/{version}/manifest.json
-claude-code-releases/{version}/win32-x64/claude.exe
-claude-code-releases/{version}/win32-arm64/claude.exe
-npm/{version}/*.tgz
-npm/{version}/manifest.json
-node/{node_version}/*.zip
-node/latest
-```
-
-安装脚本会先检查 Windows 本机是否已经有可用的 Node.js 和 npm。当前判断规则：
-
-- Claude Code 当前 npm 包要求 `node >=18.0.0`。
-- Codex CLI 当前 npm 包要求 `node >=16`。
-- 为同时兼容两者，安装脚本要求本机 `node >=18` 且能找到 npm。
-- 满足要求时直接复用本机 Node.js/npm，不下载便携 Node.js。
-- 不满足要求或找不到 npm 时，才从 R2 下载 `node/{node_version}/*.zip`。
-
-## 前置条件
+### 1. 前置条件
 
 你需要准备：
 
@@ -123,7 +105,7 @@ wrangler login
 export CLOUDFLARE_API_TOKEN="YOUR_CLOUDFLARE_API_TOKEN"
 ```
 
-## 1. 创建 R2 Bucket
+### 2. 创建 R2 Bucket
 
 创建 Worker 使用的 R2 bucket：
 
@@ -141,7 +123,7 @@ bucket_name = "claude-code-releases"
 
 `CLAUDE_RELEASES` 是 Worker 代码里使用的绑定名。如果要改这个名字，也要同步修改 `src/index.js`。
 
-## 2. 配置 R2 下载域名
+### 3. 配置 R2 下载域名
 
 在 Cloudflare 控制台给 R2 bucket 绑定自定义域名：
 
@@ -163,13 +145,7 @@ CNAME download.example.com -> public.r2.dev
 
 这条记录保持开启代理。
 
-当前线上使用的是：
-
-```text
-download.beiapi.cn
-```
-
-## 3. 配置 Worker 路由
+### 4. 配置 Worker 路由
 
 选择一个 Worker 入口域名，用来提供安装脚本和管理接口，例如：
 
@@ -185,15 +161,7 @@ routes = [
 ]
 ```
 
-当前线上使用的是：
-
-```toml
-routes = [
-  { pattern = "claude.beiapi.cn/*", zone_name = "beiapi.cn" }
-]
-```
-
-## 4. 配置 Worker 变量
+### 5. 配置 Worker 变量
 
 编辑 `wrangler.toml`，把下面这些值改成你自己的域名和账号：
 
@@ -231,7 +199,7 @@ PART_SIZE = "16777216"
 - `PLATFORMS`：需要镜像的 Windows 平台。
 - `PART_SIZE`：上传大 `.exe` 文件到 R2 时的分片大小。
 
-## 5. 配置管理密钥
+### 6. 配置管理密钥
 
 部署公开服务前必须设置 `ADMIN_TOKEN`：
 
@@ -248,7 +216,7 @@ curl -X POST -H "Authorization: Bearer YOUR_ADMIN_TOKEN" \
 
 如果没有配置 `ADMIN_TOKEN`，`/admin/sync` 会变成公开接口。公开部署时不要让它处于未配置状态。
 
-## 6. 部署 Worker
+### 7. 部署 Worker
 
 执行部署：
 
@@ -263,7 +231,7 @@ wrangler deploy
 - Route：你的 Worker 域名路由
 - Cron：`20 4 * * *`
 
-## 7. 首次手动同步
+### 8. 首次手动同步
 
 第一次部署后，建议手动触发一次同步：
 
@@ -290,7 +258,7 @@ curl -s https://claude.example.com/admin/status
 }
 ```
 
-## 8. 验证 R2 下载
+### 9. 验证 R2 下载
 
 检查 `latest`：
 
@@ -307,9 +275,9 @@ curl -I https://download.example.com/claude-code-releases/2.1.133/manifest.json
 
 其中 `2.1.133` 要替换成 `latest` 返回的当前版本号。
 
-## 9. 验证脚本
+### 10. 验证脚本
 
-检查脚本里生成的下载地址和环境变量：
+检查安装脚本：
 
 ```bash
 curl -s https://claude.example.com/install.ps1 |
@@ -330,57 +298,22 @@ curl -s https://claude.example.com/uninstall.ps1 |
   grep -E 'RemoveSettings|RemoveBackups|Uninstall'
 ```
 
-## 当前 beiapi.cn 线上配置
+### 11. R2 文件结构
 
-当前线上部署使用的是：
+R2 里存放的镜像文件结构：
 
-```toml
-name = "agents-mirror"
-account_id = "4e528d4c6e70aee6dd9fec89af0e0522"
-
-routes = [
-  { pattern = "claude.beiapi.cn/*", zone_name = "beiapi.cn" }
-]
-
-[[r2_buckets]]
-binding = "CLAUDE_RELEASES"
-bucket_name = "claude-code-releases"
-
-[vars]
-PUBLIC_BASE_URL = "https://claude.beiapi.cn"
-DOWNLOAD_BASE_URL = "https://download.beiapi.cn/claude-code-releases"
-R2_BASE_URL = "https://download.beiapi.cn"
-UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"
-NPM_REGISTRY_BASE_URL = "https://registry.npmjs.org"
-NODE_DIST_BASE_URL = "https://nodejs.org/dist"
-NODE_VERSION = "v24.15.0"
-PLATFORMS = "win32-x64,win32-arm64"
-PART_SIZE = "16777216"
+```text
+claude-code-releases/latest
+claude-code-releases/{version}/manifest.json
+claude-code-releases/{version}/win32-x64/claude.exe
+claude-code-releases/{version}/win32-arm64/claude.exe
+npm/{version}/*.tgz
+npm/{version}/manifest.json
+node/{node_version}/*.zip
+node/latest
 ```
 
-## 常用维护命令
-
-使用本地 API token 文件部署：
-
-```bash
-CLOUDFLARE_API_TOKEN="$(cat /root/.cloudflare-api-token)" npx wrangler deploy
-```
-
-轮换 `ADMIN_TOKEN`：
-
-```bash
-CLOUDFLARE_API_TOKEN="$(cat /root/.cloudflare-api-token)" npx wrangler secret put ADMIN_TOKEN
-```
-
-用 Cloudflare API 列出 R2 对象：
-
-```bash
-curl -sS -H "Authorization: Bearer $(cat /root/.cloudflare-api-token)" \
-  "https://api.cloudflare.com/client/v4/accounts/YOUR_ACCOUNT_ID/r2/buckets/claude-code-releases/objects?per_page=100" |
-  jq -r '.result[] | [.key, .size, .last_modified] | @tsv'
-```
-
-## 清理逻辑
+### 12. 清理逻辑
 
 同步成功后，Worker 会删除旧版本 release 目录：
 
@@ -397,7 +330,7 @@ node/
 
 如果你希望 npm 或 Node.js 历史版本也自动清理，需要在 Worker 中额外加入清理逻辑。
 
-## 安全注意事项
+### 13. 安全注意事项
 
 - 不要提交 Cloudflare API Token。
 - 不要提交 `.dev.vars`、`.env` 或本地 admin token 文件。
