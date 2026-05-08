@@ -144,7 +144,7 @@ Check upgrade script markers:
 
 ```bash
 curl -s https://claude.beiapi.cn/upgrade.ps1 |
-  rg -n "No Claude settings were changed|Get-RequiredCommand|MIN_NODE_MAJOR"
+  rg -n "Get-RequiredCommand|MIN_NODE_MAJOR|Upgrading Claude Code npm packages"
 ```
 
 Check uninstaller markers:

@@ -681,7 +681,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Output ""
 Write-Output "Claude Code upgrade complete."
-Write-Output "No Claude settings were changed."
 `;
 }
 
