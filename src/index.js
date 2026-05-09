@@ -4,6 +4,7 @@ const DEFAULT_DOWNLOAD_BASE = "https://download.beiapi.cn/claude-code-releases";
 const DEFAULT_R2_BASE = "https://download.beiapi.cn";
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_NODE_DIST = "https://nodejs.org/dist";
+const DEFAULT_GIT_INSTALL_PAGE = "https://git-scm.com/install/windows";
 const DEFAULT_NODE_VERSION = "v24.15.0";
 const DEFAULT_PLATFORMS = ["win32-x64", "win32-arm64"];
 const DEFAULT_PART_SIZE = 16 * 1024 * 1024;
@@ -118,6 +119,7 @@ async function syncLatest(env) {
   const skipped = [];
   const npm = await syncNpmPackages(env, latest, platforms);
   const node = await syncNodeZips(env, platforms);
+  const git = await syncGitForWindows(env, platforms);
 
   for (const platform of platforms) {
     const info = manifest.platforms?.[platform];
@@ -171,7 +173,7 @@ async function syncLatest(env) {
   });
 
   const deleted = await deleteOldVersions(env, latest);
-  return { ok: true, latest, uploaded, skipped, npm, node, deleted, syncedAt: new Date().toISOString() };
+  return { ok: true, latest, uploaded, skipped, npm, node, git, deleted, syncedAt: new Date().toISOString() };
 }
 
 async function syncNpmPackages(env, version, platforms) {
@@ -249,6 +251,73 @@ async function syncNodeZips(env, platforms) {
   });
 
   return results;
+}
+
+async function syncGitForWindows(env, platforms) {
+  const installPage = env.GIT_INSTALL_PAGE_URL || DEFAULT_GIT_INSTALL_PAGE;
+  const html = await fetchText(installPage);
+  const assetMap = parseGitForWindowsAssets(html);
+  const results = [];
+  const version = assetMap.version;
+
+  for (const platform of platforms) {
+    const asset = assetMap.assets[platform];
+    if (!asset) continue;
+
+    const key = `git/${version}/${asset.fileName}`;
+    const existing = await env.CLAUDE_RELEASES.head(key);
+    if (existing?.customMetadata?.version === version && existing?.customMetadata?.platform === platform) {
+      results.push({ platform, key, version, status: "skipped" });
+      continue;
+    }
+
+    await copyUrlToR2(env, {
+      key,
+      url: asset.url,
+      contentType: "application/octet-stream",
+      cacheControl: "public, max-age=31536000, immutable",
+      metadata: { platform, version, upstream: asset.url },
+    });
+    results.push({ platform, key, version, status: "uploaded" });
+  }
+
+  await env.CLAUDE_RELEASES.put("git/latest", JSON.stringify({ version, assets: assetMap.assets }, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=3600" },
+    customMetadata: { version, upstream: installPage },
+  });
+
+  return results;
+}
+
+function parseGitForWindowsAssets(html) {
+  const assets = {};
+  const matches = html.matchAll(/href="(https:\/\/github\.com\/git-for-windows\/git\/releases\/download\/[^"]+\/Git-([^"\/]+?)-(64-bit|arm64)\.exe)"/g);
+
+  for (const match of matches) {
+    const url = match[1].replace(/&amp;/g, "&");
+    const version = match[2];
+    const arch = match[3];
+    const platform = arch === "arm64" ? "win32-arm64" : "win32-x64";
+    if (!assets[platform]) {
+      assets[platform] = {
+        url,
+        fileName: url.split("/").pop(),
+      };
+    }
+    assets.version ||= version;
+  }
+
+  if (!assets["win32-x64"] || !assets["win32-arm64"] || !assets.version) {
+    throw new Error("Could not find Git for Windows x64 and ARM64 installer links");
+  }
+
+  return {
+    version: assets.version,
+    assets: {
+      "win32-x64": assets["win32-x64"],
+      "win32-arm64": assets["win32-arm64"],
+    },
+  };
 }
 
 async function copyUrlToR2(env, options) {
@@ -349,10 +418,13 @@ async function deleteOldVersions(env, keepVersion) {
 
 async function status(env) {
   const latestObj = await env.CLAUDE_RELEASES.get("claude-code-releases/latest");
+  const gitLatestObj = await env.CLAUDE_RELEASES.get("git/latest");
   const latest = latestObj ? (await latestObj.text()).trim() : null;
+  const gitLatest = gitLatestObj ? JSON.parse(await gitLatestObj.text()) : null;
   return {
     ok: true,
     latest,
+    gitLatest: gitLatest?.version || null,
     publicBaseUrl: env.PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE,
     downloadBaseUrl: env.DOWNLOAD_BASE_URL || DEFAULT_DOWNLOAD_BASE,
     platforms: parsePlatforms(env.PLATFORMS),
@@ -437,6 +509,93 @@ function Get-CommandSource($name) {
     return $null
 }
 
+function Get-GitBashPath() {
+    $bash = Get-CommandSource "bash.exe"
+    if ($bash -and $bash -like "*\Git\*") {
+        return $bash
+    }
+
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $candidates = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "$programFilesX86\Git\bin\bash.exe",
+        "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Get-GitExePath() {
+    $git = Get-CommandSource "git.exe"
+    if (-not $git) {
+        $git = Get-CommandSource "git"
+    }
+    if ($git) {
+        return $git
+    }
+
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $candidates = @(
+        "$env:ProgramFiles\Git\cmd\git.exe",
+        "$programFilesX86\Git\cmd\git.exe",
+        "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Install-GitForWindows() {
+    Write-Output "Git for Windows was not found; installing from mirror..."
+    $gitMeta = Invoke-RestMethod -Uri "$R2_BASE_URL/git/latest" -ErrorAction Stop
+    if ($platform -eq "win32-arm64") {
+        $asset = $gitMeta.assets.'win32-arm64'
+    } else {
+        $asset = $gitMeta.assets.'win32-x64'
+    }
+    if (-not $asset -or -not $asset.fileName) {
+        Write-Error "Git for Windows installer metadata is missing for platform $platform."
+        exit 1
+    }
+
+    $gitInstaller = "$DOWNLOAD_DIR\$($asset.fileName)"
+    $gitUri = "$R2_BASE_URL/git/$($gitMeta.version)/$($asset.fileName)"
+    if (Test-Path $gitInstaller) {
+        Remove-Item -Force $gitInstaller
+    }
+
+    Write-Output "Downloading Git for Windows from $gitUri"
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -4 -L --fail --progress-bar $gitUri -o $gitInstaller
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "curl.exe failed with exit code $LASTEXITCODE; falling back to Invoke-WebRequest."
+            Invoke-WebRequest -Uri $gitUri -OutFile $gitInstaller -ErrorAction Stop
+        }
+    } else {
+        Invoke-WebRequest -Uri $gitUri -OutFile $gitInstaller -ErrorAction Stop
+    }
+
+    Write-Output "Running Git for Windows installer..."
+    $process = Start-Process -FilePath $gitInstaller -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/SUPPRESSMSGBOXES", "/CURRENTUSER" -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        Write-Error "Git for Windows installer failed with exit code $($process.ExitCode)."
+        exit $process.ExitCode
+    }
+
+    $env:Path = "$env:LOCALAPPDATA\Programs\Git\cmd;$env:LOCALAPPDATA\Programs\Git\bin;$env:ProgramFiles\Git\cmd;$env:ProgramFiles\Git\bin;$env:Path"
+}
+
 function Get-NodeMajorVersion($nodePath) {
     try {
         $versionText = (& $nodePath -v).ToString().Trim()
@@ -448,6 +607,19 @@ function Get-NodeMajorVersion($nodePath) {
         return $null
     }
     return $null
+}
+
+$gitExe = Get-GitExePath
+if ($gitExe) {
+    Write-Output "Using existing Git for Windows: $gitExe"
+} else {
+    Install-GitForWindows
+    $gitExe = Get-GitExePath
+    if (-not $gitExe) {
+        Write-Error "Git for Windows was installed, but git.exe was not found."
+        exit 1
+    }
+    Write-Output "Git for Windows installed: $gitExe"
 }
 
 if ($platform -eq "win32-arm64") {
@@ -580,6 +752,10 @@ if (-not (Test-JsonProperty $settings "env") -or $null -eq $settings.env) {
 
 Set-JsonProperty $settings.env "ANTHROPIC_BASE_URL" $CLAUDE_BASE_URL
 Set-JsonProperty $settings.env "DISABLE_AUTOUPDATER" "1"
+$gitBashPath = Get-GitBashPath
+if ($gitBashPath) {
+    Set-JsonProperty $settings.env "CLAUDE_CODE_GIT_BASH_PATH" $gitBashPath
+}
 
 if ($ApiKey) {
     Set-JsonProperty $settings.env "ANTHROPIC_API_KEY" $ApiKey

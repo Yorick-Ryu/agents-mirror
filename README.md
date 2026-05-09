@@ -34,7 +34,9 @@ irm https://claude.beiapi.cn/install.ps1 | iex
 https://api.beiapi.cn
 ```
 
-安装脚本会检测本机是否存在 `node >=18` 和 npm。满足要求时直接复用本机 Node.js/npm；不满足要求或找不到 npm 时，才从 R2 下载便携 Node.js。
+安装脚本会检测本机是否存在 Git for Windows。存在时直接复用；不存在时，从 R2 下载镜像的 Git for Windows 安装包并静默安装。Claude Code 官方推荐 Windows 原生安装使用 Git for Windows，但当前没有明确 Git 版本下限，所以这里只检测是否存在。
+
+安装脚本还会检测本机是否存在 `node >=18` 和 npm。满足要求时直接复用本机 Node.js/npm；不满足要求或找不到 npm 时，才从 R2 下载便携 Node.js。
 
 如果检测到本机已有 Claude Code 配置，安装脚本会先备份原 `settings.json`，再写入新的配置。
 
@@ -175,6 +177,7 @@ R2_BASE_URL = "https://download.example.com"
 UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"
 NPM_REGISTRY_BASE_URL = "https://registry.npmjs.org"
 NODE_DIST_BASE_URL = "https://nodejs.org/dist"
+GIT_INSTALL_PAGE_URL = "https://git-scm.com/install/windows"
 NODE_VERSION = "v24.15.0"
 PLATFORMS = "win32-x64,win32-arm64"
 PART_SIZE = "16777216"
@@ -304,6 +307,8 @@ npm/{version}/*.tgz
 npm/{version}/manifest.json
 node/{node_version}/*.zip
 node/latest
+git/{git_version}/Git-*.exe
+git/latest
 ```
 
 ### 12. 清理逻辑

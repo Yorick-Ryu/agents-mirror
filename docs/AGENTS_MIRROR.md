@@ -51,6 +51,7 @@ R2_BASE_URL = "https://download.beiapi.cn"
 UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"
 NPM_REGISTRY_BASE_URL = "https://registry.npmjs.org"
 NODE_DIST_BASE_URL = "https://nodejs.org/dist"
+GIT_INSTALL_PAGE_URL = "https://git-scm.com/install/windows"
 NODE_VERSION = "v24.15.0"
 PLATFORMS = "win32-x64,win32-arm64"
 PART_SIZE = "16777216"
@@ -67,15 +68,18 @@ The sync flow:
 2. Read the official manifest for that version.
 3. Mirror Claude Code npm tarballs.
 4. Mirror configured portable Windows Node.js zip files.
-5. Mirror platform `claude.exe` files with R2 multipart upload.
-6. Write `claude-code-releases/{version}/manifest.json`.
-7. Write `claude-code-releases/latest`.
-8. Delete old version directories under `claude-code-releases/`.
+5. Mirror Git for Windows x64 and ARM64 installers from the official install page.
+6. Mirror platform `claude.exe` files with R2 multipart upload.
+7. Write `claude-code-releases/{version}/manifest.json`.
+8. Write `claude-code-releases/latest`.
+9. Delete old version directories under `claude-code-releases/`.
 
-The Worker currently keeps historical objects under `npm/` and `node/`.
+The Worker currently keeps historical objects under `npm/`, `node/`, and `git/`.
 
 Installer runtime selection:
 
+- Claude Code recommends Git for Windows for native Windows installs. No specific Git version floor is documented.
+- The installer uses local Git for Windows when `git.exe` exists; otherwise it downloads and silently installs Git for Windows from R2.
 - Claude Code npm metadata currently requires `node >=18.0.0`.
 - Codex CLI npm metadata currently requires `node >=16`.
 - The installer uses local Node.js/npm when local `node >=18` and npm exists.
@@ -137,7 +141,7 @@ Check installer markers:
 
 ```bash
 curl -s https://claude.beiapi.cn/install.ps1 |
-  rg -n "DOWNLOAD_BASE_URL|R2_BASE_URL|ANTHROPIC_BASE_URL|DISABLE_AUTOUPDATER|MIN_NODE_MAJOR"
+  rg -n "DOWNLOAD_BASE_URL|R2_BASE_URL|ANTHROPIC_BASE_URL|DISABLE_AUTOUPDATER|MIN_NODE_MAJOR|Install-GitForWindows|CLAUDE_CODE_GIT_BASH_PATH"
 ```
 
 Check upgrade script markers:
