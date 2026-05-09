@@ -105,7 +105,7 @@ export CLOUDFLARE_API_TOKEN="YOUR_CLOUDFLARE_API_TOKEN"
 创建 Worker 使用的 R2 bucket：
 
 ```bash
-wrangler r2 bucket create claude-code-releases
+wrangler r2 bucket create agents-mirror
 ```
 
 bucket 名称必须和 `wrangler.toml` 里的 `bucket_name` 一致：
@@ -113,7 +113,7 @@ bucket 名称必须和 `wrangler.toml` 里的 `bucket_name` 一致：
 ```toml
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"
-bucket_name = "claude-code-releases"
+bucket_name = "agents-mirror"
 ```
 
 `CLAUDE_RELEASES` 是 Worker 代码里使用的绑定名。如果要改这个名字，也要同步修改 `src/index.js`。
@@ -123,7 +123,7 @@ bucket_name = "claude-code-releases"
 在 Cloudflare 控制台给 R2 bucket 绑定自定义域名：
 
 ```text
-R2 -> claude-code-releases -> Settings -> Custom Domains -> Connect Domain
+R2 -> agents-mirror -> Settings -> Custom Domains -> Connect Domain
 ```
 
 例如使用：
@@ -223,7 +223,7 @@ wrangler deploy
 正常输出里应该能看到：
 
 - Worker 名称：`agents-mirror`
-- R2 绑定：`CLAUDE_RELEASES: claude-code-releases`
+- R2 绑定：`CLAUDE_RELEASES: agents-mirror`
 - Route：你的 Worker 域名路由
 - Cron：`20 4 * * *`
 

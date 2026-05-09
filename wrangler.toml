@@ -13,7 +13,7 @@ triggers = { crons = ["20 4 * * *"] }
 
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"
-bucket_name = "claude-code-releases"
+bucket_name = "agents-mirror"
 
 [vars]
 PUBLIC_BASE_URL = "https://claude.beiapi.cn"

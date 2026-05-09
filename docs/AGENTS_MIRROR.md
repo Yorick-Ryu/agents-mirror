@@ -11,9 +11,8 @@ For the full Cloudflare setup guide, read the repository README:
 
 - Worker: `agents-mirror`
 - Worker route: `claude.beiapi.cn/*`
-- R2 bucket: `claude-code-releases`
+- R2 bucket: `agents-mirror`
 - R2 download domain: `download.beiapi.cn`
-- Legacy R2 download domain: `claude-download.beiapi.cn`
 - GitHub repository: `https://github.com/Yorick-Ryu/agents-mirror`
 
 ## Local Paths
@@ -42,7 +41,7 @@ triggers = { crons = ["20 4 * * *"] }
 
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"
-bucket_name = "claude-code-releases"
+bucket_name = "agents-mirror"
 
 [vars]
 PUBLIC_BASE_URL = "https://claude.beiapi.cn"
@@ -124,7 +123,7 @@ List R2 objects:
 
 ```bash
 curl -sS -H "Authorization: Bearer $(cat /root/.cloudflare-api-token)" \
-  "https://api.cloudflare.com/client/v4/accounts/4e528d4c6e70aee6dd9fec89af0e0522/r2/buckets/claude-code-releases/objects?per_page=100" |
+  "https://api.cloudflare.com/client/v4/accounts/4e528d4c6e70aee6dd9fec89af0e0522/r2/buckets/agents-mirror/objects?per_page=100" |
   jq -r '.result[] | [.key, .size, .last_modified] | @tsv'
 ```
 
@@ -132,7 +131,7 @@ Read the small `latest` object:
 
 ```bash
 cd /root/agents-mirror
-CLOUDFLARE_API_TOKEN="$(cat /root/.cloudflare-api-token)" npx wrangler r2 object get claude-code-releases/claude-code-releases/latest --file -
+CLOUDFLARE_API_TOKEN="$(cat /root/.cloudflare-api-token)" npx wrangler r2 object get agents-mirror/claude-code-releases/latest --file -
 ```
 
 ## Smoke Tests
