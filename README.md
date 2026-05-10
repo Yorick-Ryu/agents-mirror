@@ -1,14 +1,14 @@
-# 国内环境下 Windows 一键安装 Claude Code 脚本及部署教程
+# 国内环境下 Windows 一键安装 Claude Code / Codex CLI 脚本及部署教程
 
 Agents Mirror 是一个基于 Cloudflare Worker + R2 的 AI 编程 Agent 工具镜像服务。
 
-目前支持状态：仅支持 Windows 版 Claude Code。
+目前支持状态：Windows 版 Claude Code 和 OpenAI Codex CLI。
 
 ## 一、使用我们部署好的脚本
 
 以下命令在 Windows PowerShell 中运行。
 
-### 安装
+### Claude Code 标准安装
 
 直接安装：
 
@@ -66,6 +66,67 @@ irm https://claude.beiapi.cn/uninstall.ps1 | iex
 
 ```powershell
 & ([scriptblock]::Create((irm https://claude.beiapi.cn/uninstall.ps1))) -RemoveSettings -RemoveBackups
+```
+
+### DeepSeek 专用 Claude Code 一键安装
+
+这个脚本专门用于 DeepSeek Anthropic API。它会安装 Claude Code，并把 DeepSeek 的 API 地址、模型和 API Key 写入 Claude Code 配置。
+
+在 Windows PowerShell 中运行，传入 DeepSeek API Key：
+
+```powershell
+& ([scriptblock]::Create((irm https://claude.beiapi.cn/install-deepseek.ps1))) -ApiKey "YOUR_DEEPSEEK_API_KEY"
+```
+
+这个脚本会安装 Claude Code，并把 DeepSeek Anthropic API 配置写入
+`%USERPROFILE%\.claude\settings.json`：
+
+```text
+ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic
+ANTHROPIC_AUTH_TOKEN=<YOUR_DEEPSEEK_API_KEY>
+ANTHROPIC_MODEL=deepseek-v4-pro[1m]
+ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m]
+ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m]
+ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash
+CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash
+CLAUDE_CODE_EFFORT_LEVEL=max
+```
+
+脚本复用同一套 Claude Code、Node.js 和 Git for Windows 镜像资源。检测到已有
+`settings.json` 时，会先备份再更新配置。
+
+### Codex CLI 一键安装
+
+直接安装：
+
+```powershell
+irm https://codex.beiapi.cn/install.ps1 | iex
+```
+
+脚本会安装 Git for Windows、Node.js/npm 和 Codex CLI。检测到本机已有 Git for Windows 或 `node >=16` + npm 时会直接复用；否则从 R2 下载镜像的安装包或便携 Node.js。
+
+Codex 安装脚本只负责安装 CLI，不自动配置登录或 API Key。安装完成后打开新的 PowerShell，按你的使用方式执行：
+
+```powershell
+codex login
+```
+
+升级：
+
+```powershell
+irm https://codex.beiapi.cn/upgrade.ps1 | iex
+```
+
+卸载，默认保留 `%USERPROFILE%\.codex\config.toml` 和 `%USERPROFILE%\.codex\auth.json`：
+
+```powershell
+irm https://codex.beiapi.cn/uninstall.ps1 | iex
+```
+
+如需同时删除配置或登录信息：
+
+```powershell
+& ([scriptblock]::Create((irm https://codex.beiapi.cn/uninstall.ps1))) -RemoveConfig -RemoveAuth
 ```
 
 ## 二、如何自己部署？
@@ -152,7 +213,8 @@ claude.example.com
 
 ```toml
 routes = [
-  { pattern = "claude.example.com/*", zone_name = "example.com" }
+  { pattern = "claude.example.com/*", zone_name = "example.com" },
+  { pattern = "codex.example.com/*", zone_name = "example.com" }
 ]
 ```
 
@@ -168,10 +230,11 @@ account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
 
 workers_dev = false
 
-triggers = { crons = ["20 4 * * *"] }
+triggers = { crons = ["20 4 * * MON-SAT", "20 4 * * SUN"] }
 
 [vars]
 PUBLIC_BASE_URL = "https://claude.example.com"
+CODEX_PUBLIC_BASE_URL = "https://codex.example.com"
 DOWNLOAD_BASE_URL = "https://download.example.com/claude-code-releases"
 R2_BASE_URL = "https://download.example.com"
 UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"
@@ -186,6 +249,7 @@ PART_SIZE = "16777216"
 变量说明：
 
 - `PUBLIC_BASE_URL`：Worker 公开访问域名。
+- `CODEX_PUBLIC_BASE_URL`：Codex CLI 专用 Worker 访问域名，应配置为独立子域名，例如 `https://codex.example.com`。
 - `DOWNLOAD_BASE_URL`：R2 中 Claude Code release 前缀，用来读取 `latest`。
 - `R2_BASE_URL`：R2 自定义域名根地址，用来下载 npm 包和 Node.js zip。
 - `UPSTREAM_BASE_URL`：Claude Code 官方 release 源。
@@ -225,7 +289,9 @@ wrangler deploy
 - Worker 名称：`agents-mirror`
 - R2 绑定：`CLAUDE_RELEASES: agents-mirror`
 - Route：你的 Worker 域名路由
-- Cron：`20 4 * * *`
+- Cron：`20 4 * * MON-SAT` 和 `20 4 * * SUN`
+
+定时同步分两种模式：周一到周六 `04:20 UTC` 同步 Claude Code latest、Claude npm tarball、Codex CLI npm tarball 和 `claude.exe`；周日 `04:20 UTC` 额外同步 Node.js zip 和 Git for Windows 安装包。手动 `/admin/sync` 仍会执行完整同步。
 
 ### 8. 首次手动同步
 
@@ -248,6 +314,7 @@ curl -s https://claude.example.com/admin/status
 {
   "ok": true,
   "latest": "2.1.133",
+  "codexLatest": "0.130.0",
   "publicBaseUrl": "https://claude.example.com",
   "downloadBaseUrl": "https://download.example.com/claude-code-releases",
   "platforms": ["win32-x64", "win32-arm64"]
@@ -294,6 +361,17 @@ curl -s https://claude.example.com/uninstall.ps1 |
   grep -E 'RemoveSettings|RemoveBackups|Uninstall'
 ```
 
+检查 Codex 脚本：
+
+```bash
+curl -s https://codex.example.com/install.ps1 |
+  grep -E 'codex/latest|MIN_NODE_MAJOR|Installing Codex CLI npm packages'
+curl -s https://codex.example.com/upgrade.ps1 |
+  grep -E 'Get-RequiredCommand|Upgrading Codex CLI npm packages'
+curl -s https://codex.example.com/uninstall.ps1 |
+  grep -E 'RemoveConfig|RemoveAuth|Uninstall'
+```
+
 ### 11. R2 文件结构
 
 R2 里存放的镜像文件结构：
@@ -305,6 +383,11 @@ claude-code-releases/{version}/win32-x64/claude.exe
 claude-code-releases/{version}/win32-arm64/claude.exe
 npm/{version}/*.tgz
 npm/{version}/manifest.json
+codex/latest
+codex/npm/{version}/codex-{version}.tgz
+codex/npm/{version}/codex-{version}-win32-x64.tgz
+codex/npm/{version}/codex-{version}-win32-arm64.tgz
+codex/npm/{version}/manifest.json
 node/{node_version}/*.zip
 node/latest
 git/{git_version}/Git-*.exe
@@ -319,14 +402,16 @@ git/latest
 claude-code-releases/{old_version}/
 ```
 
-当前 Worker 会保留历史 npm 和 Node.js 对象：
+当前 Worker 会保留历史 npm、Codex npm、Node.js 和 Git for Windows 对象：
 
 ```text
 npm/
+codex/npm/
 node/
+git/
 ```
 
-如果你希望 npm 或 Node.js 历史版本也自动清理，需要在 Worker 中额外加入清理逻辑。
+如果你希望 npm、Codex npm、Node.js 或 Git for Windows 历史版本也自动清理，需要在 Worker 中额外加入清理逻辑。
 
 ### 13. 安全注意事项
 

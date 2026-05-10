@@ -6,10 +6,11 @@ account_id = "4e528d4c6e70aee6dd9fec89af0e0522"
 workers_dev = false
 
 routes = [
-  { pattern = "claude.beiapi.cn/*", zone_name = "beiapi.cn" }
+  { pattern = "claude.beiapi.cn/*", zone_name = "beiapi.cn" },
+  { pattern = "codex.beiapi.cn/*", zone_name = "beiapi.cn" }
 ]
 
-triggers = { crons = ["20 4 * * *"] }
+triggers = { crons = ["20 4 * * MON-SAT", "20 4 * * SUN"] }
 
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"
@@ -17,6 +18,7 @@ bucket_name = "agents-mirror"
 
 [vars]
 PUBLIC_BASE_URL = "https://claude.beiapi.cn"
+CODEX_PUBLIC_BASE_URL = "https://codex.beiapi.cn"
 DOWNLOAD_BASE_URL = "https://download.beiapi.cn/claude-code-releases"
 R2_BASE_URL = "https://download.beiapi.cn"
 UPSTREAM_BASE_URL = "https://downloads.claude.ai/claude-code-releases"

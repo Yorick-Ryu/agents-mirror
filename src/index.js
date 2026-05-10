@@ -1,38 +1,74 @@
 const DEFAULT_UPSTREAM = "https://downloads.claude.ai/claude-code-releases";
 const DEFAULT_PUBLIC_BASE = "https://claude.beiapi.cn";
+const DEFAULT_CODEX_PUBLIC_BASE = "https://codex.beiapi.cn";
 const DEFAULT_DOWNLOAD_BASE = "https://download.beiapi.cn/claude-code-releases";
 const DEFAULT_R2_BASE = "https://download.beiapi.cn";
 const DEFAULT_NPM_REGISTRY = "https://registry.npmjs.org";
 const DEFAULT_NODE_DIST = "https://nodejs.org/dist";
 const DEFAULT_GIT_INSTALL_PAGE = "https://git-scm.com/install/windows";
 const DEFAULT_NODE_VERSION = "v24.15.0";
+const CODEX_PACKAGE = "@openai/codex";
+const CODEX_MIN_NODE_MAJOR = 16;
 const DEFAULT_PLATFORMS = ["win32-x64", "win32-arm64"];
 const DEFAULT_PART_SIZE = 16 * 1024 * 1024;
+const WEEKLY_RUNTIME_SYNC_CRON = "20 4 * * SUN";
 
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    const codexPublicBase = env.CODEX_PUBLIC_BASE_URL || DEFAULT_CODEX_PUBLIC_BASE;
+    const isCodexHost = url.hostname === new URL(codexPublicBase).hostname;
 
-    if (url.pathname === "/" || url.pathname === "/claude" || url.pathname === "/claude/") {
+    if (isCodexHost && url.pathname === "/") {
+      return new Response("Codex CLI mirror is online.\n", {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=60" },
+      });
+    }
+
+    if (!isCodexHost && url.pathname === "/") {
       return new Response("Claude Code mirror is online.\n", {
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=60" },
       });
     }
 
-    if (url.pathname === "/install.ps1" || url.pathname === "/claude/install.ps1") {
+    if (!isCodexHost && url.pathname === "/install.ps1") {
       return new Response(renderInstallScript(env), {
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
-    if (url.pathname === "/upgrade.ps1" || url.pathname === "/claude/upgrade.ps1") {
+    if (!isCodexHost && url.pathname === "/install-deepseek.ps1") {
+      return new Response(renderInstallScript(env, { provider: "deepseek" }), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    if (!isCodexHost && url.pathname === "/upgrade.ps1") {
       return new Response(renderUpgradeScript(env), {
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
 
-    if (url.pathname === "/uninstall.ps1" || url.pathname === "/claude/uninstall.ps1") {
+    if (!isCodexHost && url.pathname === "/uninstall.ps1") {
       return new Response(renderUninstallScript(), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    if (isCodexHost && url.pathname === "/install.ps1") {
+      return new Response(renderCodexInstallScript(env), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    if (isCodexHost && url.pathname === "/upgrade.ps1") {
+      return new Response(renderCodexUpgradeScript(env), {
+        headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+      });
+    }
+
+    if (isCodexHost && url.pathname === "/uninstall.ps1") {
+      return new Response(renderCodexUninstallScript(), {
         headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
       });
     }
@@ -46,11 +82,11 @@ export default {
       if (env.ADMIN_TOKEN && auth !== `Bearer ${env.ADMIN_TOKEN}`) {
         return json({ ok: false, error: "unauthorized" }, 401);
       }
-      const result = await syncLatest(env);
+      const result = await syncAll(env);
       return json(result);
     }
 
-    if (url.pathname.startsWith("/claude-code-releases/")) {
+    if ((!isCodexHost && url.pathname.startsWith("/claude-code-releases/")) || (isCodexHost && url.pathname.startsWith("/codex/"))) {
       return serveR2Object(env, url.pathname.slice(1), request);
     }
 
@@ -58,7 +94,7 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(syncLatest(env));
+    ctx.waitUntil(syncAll(env, { syncRuntime: event.cron === WEEKLY_RUNTIME_SYNC_CRON }));
   },
 };
 
@@ -81,7 +117,7 @@ async function serveR2Object(env, key, request) {
   headers.set("accept-ranges", "bytes");
   headers.set("content-length", object.size.toString());
 
-  if (key === "claude-code-releases/latest") {
+  if (key === "claude-code-releases/latest" || key === "codex/latest") {
     headers.set("cache-control", "public, max-age=60");
     headers.set("content-type", "text/plain; charset=utf-8");
   } else if (key.endsWith("/manifest.json")) {
@@ -104,9 +140,18 @@ async function serveR2Object(env, key, request) {
   return new Response(object.body, { headers });
 }
 
-async function syncLatest(env) {
+async function syncAll(env, options = {}) {
+  const claude = await syncLatest(env, options);
+  const codex = await syncCodexLatest(env, { ...options, syncRuntime: false });
+  codex.node = claude.node;
+  codex.git = claude.git;
+  return { ...claude, claude, codex };
+}
+
+async function syncLatest(env, options = {}) {
   const upstreamBase = env.UPSTREAM_BASE_URL || DEFAULT_UPSTREAM;
   const platforms = parsePlatforms(env.PLATFORMS);
+  const syncRuntime = options.syncRuntime !== false;
   const latest = (await fetchText(`${upstreamBase}/latest`)).trim();
 
   if (!/^\d+\.\d+\.\d+(-[^\s]+)?$/.test(latest)) {
@@ -118,8 +163,8 @@ async function syncLatest(env) {
   const uploaded = [];
   const skipped = [];
   const npm = await syncNpmPackages(env, latest, platforms);
-  const node = await syncNodeZips(env, platforms);
-  const git = await syncGitForWindows(env, platforms);
+  const node = syncRuntime ? await syncNodeZips(env, platforms) : { status: "deferred", schedule: "weekly" };
+  const git = syncRuntime ? await syncGitForWindows(env, platforms) : { status: "deferred", schedule: "weekly" };
 
   for (const platform of platforms) {
     const info = manifest.platforms?.[platform];
@@ -176,6 +221,33 @@ async function syncLatest(env) {
   return { ok: true, latest, uploaded, skipped, npm, node, git, deleted, syncedAt: new Date().toISOString() };
 }
 
+async function syncCodexLatest(env, options = {}) {
+  const platforms = parsePlatforms(env.PLATFORMS);
+  const syncRuntime = options.syncRuntime !== false;
+  const latestMeta = await fetchNpmPackageVersion(env, CODEX_PACKAGE, "latest");
+  const latest = latestMeta.version;
+  if (!/^\d+\.\d+\.\d+(-[^\s]+)?$/.test(latest)) {
+    throw new Error(`Unexpected Codex latest version: ${latest}`);
+  }
+
+  const npm = await syncCodexNpmPackages(env, latest, platforms);
+  const node = syncRuntime ? await syncNodeZips(env, platforms) : { status: "deferred", schedule: "weekly" };
+  const git = syncRuntime ? await syncGitForWindows(env, platforms) : { status: "deferred", schedule: "weekly" };
+
+  await env.CLAUDE_RELEASES.put("codex/latest", `${latest}\n`, {
+    httpMetadata: {
+      contentType: "text/plain; charset=utf-8",
+      cacheControl: "public, max-age=60",
+    },
+    customMetadata: {
+      version: latest,
+      package: CODEX_PACKAGE,
+    },
+  });
+
+  return { ok: true, latest, npm, node, git, syncedAt: new Date().toISOString() };
+}
+
 async function syncNpmPackages(env, version, platforms) {
   const registry = env.NPM_REGISTRY_BASE_URL || DEFAULT_NPM_REGISTRY;
   const packages = ["@anthropic-ai/claude-code"];
@@ -213,6 +285,50 @@ async function syncNpmPackages(env, version, platforms) {
   await env.CLAUDE_RELEASES.put(`npm/${version}/manifest.json`, JSON.stringify(results, null, 2), {
     httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=300" },
     customMetadata: { version },
+  });
+
+  return results;
+}
+
+async function syncCodexNpmPackages(env, version, platforms) {
+  const packages = [{ packageName: CODEX_PACKAGE, packageLabel: CODEX_PACKAGE, versionSpec: version }];
+  for (const platform of platforms) {
+    packages.push({
+      packageName: CODEX_PACKAGE,
+      packageLabel: `@openai/codex-${platform}`,
+      versionSpec: `${version}-${platform}`,
+    });
+  }
+
+  const results = [];
+  for (const pkg of packages) {
+    const meta = await fetchNpmPackageVersion(env, pkg.packageName, pkg.versionSpec);
+    const tarball = meta.dist?.tarball;
+    const integrity = meta.dist?.integrity || "";
+    const shasum = meta.dist?.shasum || "";
+    if (!tarball) throw new Error(`Missing npm tarball for ${pkg.packageLabel}@${pkg.versionSpec}`);
+
+    const fileName = tarball.split("/").pop();
+    const key = `codex/npm/${version}/${fileName}`;
+    const existing = await env.CLAUDE_RELEASES.head(key);
+    if (existing?.customMetadata?.integrity === integrity && existing?.customMetadata?.package === pkg.packageLabel) {
+      results.push({ package: pkg.packageLabel, resolvedVersion: pkg.versionSpec, key, status: "skipped" });
+      continue;
+    }
+
+    await copyUrlToR2(env, {
+      key,
+      url: tarball,
+      contentType: "application/octet-stream",
+      cacheControl: "public, max-age=31536000, immutable",
+      metadata: { package: pkg.packageLabel, version: pkg.versionSpec, integrity, shasum, upstream: tarball },
+    });
+    results.push({ package: pkg.packageLabel, resolvedVersion: pkg.versionSpec, key, status: "uploaded" });
+  }
+
+  await env.CLAUDE_RELEASES.put(`codex/npm/${version}/manifest.json`, JSON.stringify(results, null, 2), {
+    httpMetadata: { contentType: "application/json; charset=utf-8", cacheControl: "public, max-age=300" },
+    customMetadata: { version, package: CODEX_PACKAGE },
   });
 
   return results;
@@ -418,12 +534,15 @@ async function deleteOldVersions(env, keepVersion) {
 
 async function status(env) {
   const latestObj = await env.CLAUDE_RELEASES.get("claude-code-releases/latest");
+  const codexLatestObj = await env.CLAUDE_RELEASES.get("codex/latest");
   const gitLatestObj = await env.CLAUDE_RELEASES.get("git/latest");
   const latest = latestObj ? (await latestObj.text()).trim() : null;
+  const codexLatest = codexLatestObj ? (await codexLatestObj.text()).trim() : null;
   const gitLatest = gitLatestObj ? JSON.parse(await gitLatestObj.text()) : null;
   return {
     ok: true,
     latest,
+    codexLatest,
     gitLatest: gitLatest?.version || null,
     publicBaseUrl: env.PUBLIC_BASE_URL || DEFAULT_PUBLIC_BASE,
     downloadBaseUrl: env.DOWNLOAD_BASE_URL || DEFAULT_DOWNLOAD_BASE,
@@ -446,6 +565,12 @@ async function fetchJson(url) {
   return JSON.parse(await fetchText(url));
 }
 
+async function fetchNpmPackageVersion(env, name, version) {
+  const registry = env.NPM_REGISTRY_BASE_URL || DEFAULT_NPM_REGISTRY;
+  const encoded = encodeURIComponent(name).replace("%40", "@");
+  return fetchJson(`${registry}/${encoded}/${version}`);
+}
+
 function parsePlatforms(value) {
   if (!value) return DEFAULT_PLATFORMS;
   return value.split(",").map((item) => item.trim()).filter(Boolean);
@@ -458,17 +583,50 @@ function json(value, status = 200) {
   });
 }
 
-function renderInstallScript(env) {
+function renderInstallScript(env, options = {}) {
   const downloadBase = env.DOWNLOAD_BASE_URL || DEFAULT_DOWNLOAD_BASE;
   const r2Base = env.R2_BASE_URL || DEFAULT_R2_BASE;
   const nodeVersion = env.NODE_VERSION || DEFAULT_NODE_VERSION;
-  return String.raw`param(
+  const isDeepSeek = options.provider === "deepseek";
+  const paramBlock = isDeepSeek
+    ? String.raw`param(
+    [Parameter(Mandatory = $true)]
+    [string]$ApiKey
+)`
+    : String.raw`param(
     [Parameter()]
     [string]$BaseUrl = "https://api.beiapi.cn",
 
     [Parameter()]
     [string]$ApiKey
-)
+)`;
+  const baseUrlLine = isDeepSeek
+    ? String.raw`$CLAUDE_BASE_URL = "https://api.deepseek.com/anthropic"`
+    : String.raw`$CLAUDE_BASE_URL = $BaseUrl.TrimEnd('/')`;
+  const apiKeyConfigBlock = isDeepSeek
+    ? String.raw`Set-JsonProperty $settings.env "ANTHROPIC_AUTH_TOKEN" $ApiKey
+Set-JsonProperty $settings.env "ANTHROPIC_MODEL" "deepseek-v4-pro[1m]"
+Set-JsonProperty $settings.env "ANTHROPIC_DEFAULT_OPUS_MODEL" "deepseek-v4-pro[1m]"
+Set-JsonProperty $settings.env "ANTHROPIC_DEFAULT_SONNET_MODEL" "deepseek-v4-pro[1m]"
+Set-JsonProperty $settings.env "ANTHROPIC_DEFAULT_HAIKU_MODEL" "deepseek-v4-flash"
+Set-JsonProperty $settings.env "CLAUDE_CODE_SUBAGENT_MODEL" "deepseek-v4-flash"
+Set-JsonProperty $settings.env "CLAUDE_CODE_EFFORT_LEVEL" "max"`
+    : String.raw`if ($ApiKey) {
+    Set-JsonProperty $settings.env "ANTHROPIC_AUTH_TOKEN" $ApiKey
+}`;
+  const completionText = isDeepSeek
+    ? String.raw`Write-Output "DeepSeek Claude Code installation complete."
+Write-Output "Base URL configured: $CLAUDE_BASE_URL"
+Write-Output "DeepSeek API key configured."
+Write-Output "Primary model configured: deepseek-v4-pro[1m]"`
+    : String.raw`Write-Output "Claude Code installation complete."
+Write-Output "Base URL configured: $CLAUDE_BASE_URL"
+if ($ApiKey) {
+    Write-Output "API key configured."
+} else {
+    Write-Output "API key was not provided; existing key, if any, was left unchanged."
+}`;
+  return String.raw`${paramBlock}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -485,7 +643,7 @@ $NODE_VERSION = "${nodeVersion}"
 $DOWNLOAD_DIR = "$env:USERPROFILE\.claude\downloads"
 $NODE_ROOT = "$env:USERPROFILE\.claude\node"
 $NPM_PREFIX = "$env:USERPROFILE\.claude\local"
-$CLAUDE_BASE_URL = $BaseUrl.TrimEnd('/')
+${baseUrlLine}
 $MIN_NODE_MAJOR = 18
 
 if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
@@ -640,6 +798,7 @@ if (-not $systemNpm) {
 }
 $nodeExe = $null
 $npmCmd = $null
+$usingPortableNode = $false
 
 if ($systemNode -and $systemNpm) {
     $systemNodeMajor = Get-NodeMajorVersion $systemNode
@@ -679,6 +838,7 @@ if (-not $nodeExe -or -not $npmCmd) {
     $env:Path = "$nodeDir;$nodeDir\node_modules\npm\bin;$env:Path"
     $nodeExe = "$nodeDir\node.exe"
     $npmCmd = "$nodeDir\npm.cmd"
+    $usingPortableNode = $true
 }
 
 if (-not (Test-Path $nodeExe) -or -not (Test-Path $npmCmd)) {
@@ -707,9 +867,28 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (-not $userPath) {
     $userPath = ""
 }
-if ($userPath -notlike "*$cmdDir*") {
-    [Environment]::SetEnvironmentVariable("Path", "$cmdDir;$userPath", "User")
-    Write-Output "Added Claude Code npm prefix to user PATH: $cmdDir"
+$pathEntries = @($cmdDir)
+if ($usingPortableNode) {
+    $pathEntries += @($nodeDir, "$nodeDir\node_modules\npm\bin")
+}
+$existingPathParts = @($userPath -split ';' | Where-Object { $_ })
+$entriesToAdd = @()
+foreach ($entry in $pathEntries) {
+    $normalizedEntry = $entry.TrimEnd('\')
+    $exists = $false
+    foreach ($part in $existingPathParts) {
+        if ($part.TrimEnd('\') -ieq $normalizedEntry) {
+            $exists = $true
+            break
+        }
+    }
+    if (-not $exists) {
+        $entriesToAdd += $entry
+    }
+}
+if ($entriesToAdd.Count -gt 0) {
+    [Environment]::SetEnvironmentVariable("Path", "$($entriesToAdd -join ';');$userPath", "User")
+    Write-Output "Added Claude Code paths to user PATH: $($entriesToAdd -join ';')"
 }
 $env:Path = "$cmdDir;$env:Path"
 
@@ -757,9 +936,7 @@ if ($gitBashPath) {
     Set-JsonProperty $settings.env "CLAUDE_CODE_GIT_BASH_PATH" $gitBashPath
 }
 
-if ($ApiKey) {
-    Set-JsonProperty $settings.env "ANTHROPIC_API_KEY" $ApiKey
-}
+${apiKeyConfigBlock}
 
 $settings | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding UTF8
 
@@ -769,13 +946,7 @@ if (Test-Path $DOWNLOAD_DIR) {
 }
 
 Write-Output ""
-Write-Output "Claude Code installation complete."
-Write-Output "Base URL configured: $CLAUDE_BASE_URL"
-if ($ApiKey) {
-    Write-Output "API key configured."
-} else {
-    Write-Output "API key was not provided; existing key, if any, was left unchanged."
-}
+${completionText}
 Write-Output ""
 `;
 }
@@ -885,7 +1056,9 @@ if ($userPath) {
     $parts = $userPath -split ';' | Where-Object {
         $_ -and
         ($_.TrimEnd('\') -ne $NPM_PREFIX.TrimEnd('\')) -and
-        ($_.TrimEnd('\') -ne "$NPM_PREFIX\bin".TrimEnd('\'))
+        ($_.TrimEnd('\') -ne "$NPM_PREFIX\bin".TrimEnd('\')) -and
+        ($_.TrimEnd('\') -ne $NODE_ROOT.TrimEnd('\')) -and
+        ($_.TrimEnd('\') -notlike "$($NODE_ROOT.TrimEnd('\'))\*")
     }
     $newPath = ($parts -join ';')
     if ($newPath -ne $userPath) {
@@ -915,6 +1088,404 @@ if ($RemoveBackups) {
     Write-Output "Removed settings backups."
 } else {
     Write-Output "Kept settings backups."
+}
+
+Write-Output ""
+Write-Output "Uninstall complete. Open a new terminal for PATH changes to take effect."
+`;
+}
+
+function renderCodexInstallScript(env) {
+  const r2Base = env.R2_BASE_URL || DEFAULT_R2_BASE;
+  const nodeVersion = env.NODE_VERSION || DEFAULT_NODE_VERSION;
+  return String.raw`Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$ProgressPreference = 'Continue'
+
+if (-not [Environment]::Is64BitProcess) {
+    Write-Error "Codex CLI does not support 32-bit Windows. Please use a 64-bit version of Windows."
+    exit 1
+}
+
+$R2_BASE_URL = "${r2Base}"
+$NODE_VERSION = "${nodeVersion}"
+$DOWNLOAD_DIR = "$env:USERPROFILE\.codex\downloads"
+$NODE_ROOT = "$env:USERPROFILE\.codex\node"
+$NPM_PREFIX = "$env:USERPROFILE\.codex\local"
+$MIN_NODE_MAJOR = ${CODEX_MIN_NODE_MAJOR}
+
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+    $platform = "win32-arm64"
+} else {
+    $platform = "win32-x64"
+}
+
+New-Item -ItemType Directory -Force -Path $DOWNLOAD_DIR | Out-Null
+
+Write-Output "Checking latest Codex CLI version from mirror..."
+$version = (Invoke-RestMethod -Uri "$R2_BASE_URL/codex/latest" -ErrorAction Stop).ToString().Trim()
+Write-Output "Latest version: $version"
+
+function Get-CommandSource($name) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    return $null
+}
+
+function Get-GitExePath() {
+    $git = Get-CommandSource "git.exe"
+    if (-not $git) {
+        $git = Get-CommandSource "git"
+    }
+    if ($git) {
+        return $git
+    }
+
+    $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+    $candidates = @(
+        "$env:ProgramFiles\Git\cmd\git.exe",
+        "$programFilesX86\Git\cmd\git.exe",
+        "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Install-GitForWindows() {
+    Write-Output "Git for Windows was not found; installing from mirror..."
+    $gitMeta = Invoke-RestMethod -Uri "$R2_BASE_URL/git/latest" -ErrorAction Stop
+    if ($platform -eq "win32-arm64") {
+        $asset = $gitMeta.assets.'win32-arm64'
+    } else {
+        $asset = $gitMeta.assets.'win32-x64'
+    }
+    if (-not $asset -or -not $asset.fileName) {
+        Write-Error "Git for Windows installer metadata is missing for platform $platform."
+        exit 1
+    }
+
+    $gitInstaller = "$DOWNLOAD_DIR\$($asset.fileName)"
+    $gitUri = "$R2_BASE_URL/git/$($gitMeta.version)/$($asset.fileName)"
+    if (Test-Path $gitInstaller) {
+        Remove-Item -Force $gitInstaller
+    }
+
+    Write-Output "Downloading Git for Windows from $gitUri"
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -4 -L --fail --progress-bar $gitUri -o $gitInstaller
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "curl.exe failed with exit code $LASTEXITCODE; falling back to Invoke-WebRequest."
+            Invoke-WebRequest -Uri $gitUri -OutFile $gitInstaller -ErrorAction Stop
+        }
+    } else {
+        Invoke-WebRequest -Uri $gitUri -OutFile $gitInstaller -ErrorAction Stop
+    }
+
+    Write-Output "Running Git for Windows installer..."
+    $process = Start-Process -FilePath $gitInstaller -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/SUPPRESSMSGBOXES", "/CURRENTUSER" -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        Write-Error "Git for Windows installer failed with exit code $($process.ExitCode)."
+        exit $process.ExitCode
+    }
+
+    $env:Path = "$env:LOCALAPPDATA\Programs\Git\cmd;$env:ProgramFiles\Git\cmd;$env:Path"
+}
+
+function Get-NodeMajorVersion($nodePath) {
+    try {
+        $versionText = (& $nodePath -v).ToString().Trim()
+        if ($versionText -match '^v?(\d+)\.') {
+            return [int]$Matches[1]
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+$gitExe = Get-GitExePath
+if ($gitExe) {
+    Write-Output "Using existing Git for Windows: $gitExe"
+} else {
+    Install-GitForWindows
+    $gitExe = Get-GitExePath
+    if (-not $gitExe) {
+        Write-Error "Git for Windows was installed, but git.exe was not found."
+        exit 1
+    }
+    Write-Output "Git for Windows installed: $gitExe"
+}
+
+if ($platform -eq "win32-arm64") {
+    $nodeArch = "win-arm64"
+} else {
+    $nodeArch = "win-x64"
+}
+$nodeDir = "$NODE_ROOT\node-$NODE_VERSION-$nodeArch"
+$nodeZip = "$DOWNLOAD_DIR\node-$NODE_VERSION-$nodeArch.zip"
+$nodeUri = "$R2_BASE_URL/node/$NODE_VERSION/node-$NODE_VERSION-$nodeArch.zip"
+$systemNode = Get-CommandSource "node.exe"
+if (-not $systemNode) {
+    $systemNode = Get-CommandSource "node"
+}
+$systemNpm = Get-CommandSource "npm.cmd"
+if (-not $systemNpm) {
+    $systemNpm = Get-CommandSource "npm"
+}
+$nodeExe = $null
+$npmCmd = $null
+$usingPortableNode = $false
+
+if ($systemNode -and $systemNpm) {
+    $systemNodeMajor = Get-NodeMajorVersion $systemNode
+    if ($null -ne $systemNodeMajor -and $systemNodeMajor -ge $MIN_NODE_MAJOR) {
+        $nodeExe = $systemNode
+        $npmCmd = $systemNpm
+        Write-Output "Using existing Node.js runtime: $nodeExe"
+        Write-Output "Using existing npm: $npmCmd"
+    } else {
+        Write-Output "Existing Node.js is missing or older than required major version $MIN_NODE_MAJOR; portable runtime will be used."
+    }
+} else {
+    Write-Output "Existing Node.js/npm was not found; portable runtime will be used."
+}
+
+if (-not $nodeExe -or -not $npmCmd) {
+    Write-Output "Preparing Node.js portable runtime..."
+    if (-not (Test-Path "$nodeDir\node.exe")) {
+        New-Item -ItemType Directory -Force -Path $NODE_ROOT | Out-Null
+        if (Test-Path $nodeZip) {
+            Remove-Item -Force $nodeZip
+        }
+        Write-Output "Downloading Node.js from $nodeUri"
+        if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+            & curl.exe -4 -L --fail --progress-bar $nodeUri -o $nodeZip
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "curl.exe failed with exit code $LASTEXITCODE; falling back to Invoke-WebRequest."
+                Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
+            }
+        } else {
+            Invoke-WebRequest -Uri $nodeUri -OutFile $nodeZip -ErrorAction Stop
+        }
+        Write-Output "Extracting Node.js..."
+        Expand-Archive -Path $nodeZip -DestinationPath $NODE_ROOT -Force
+    }
+
+    $env:Path = "$nodeDir;$nodeDir\node_modules\npm\bin;$env:Path"
+    $nodeExe = "$nodeDir\node.exe"
+    $npmCmd = "$nodeDir\npm.cmd"
+    $usingPortableNode = $true
+}
+
+if (-not (Test-Path $nodeExe) -or -not (Test-Path $npmCmd)) {
+    Write-Error "Node.js portable runtime was not installed correctly."
+    exit 1
+}
+
+Write-Output "Installing Codex CLI npm packages..."
+New-Item -ItemType Directory -Force -Path $NPM_PREFIX | Out-Null
+$wrapperTgz = "$R2_BASE_URL/codex/npm/$version/codex-$version.tgz"
+if ($platform -eq "win32-arm64") {
+    $nativePackage = "@openai/codex-win32-arm64@$R2_BASE_URL/codex/npm/$version/codex-$version-win32-arm64.tgz"
+} else {
+    $nativePackage = "@openai/codex-win32-x64@$R2_BASE_URL/codex/npm/$version/codex-$version-win32-x64.tgz"
+}
+
+& $npmCmd install -g --prefix $NPM_PREFIX --omit=optional $nativePackage $wrapperTgz
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "npm install failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
+
+$cmdDir = "$NPM_PREFIX"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not $userPath) {
+    $userPath = ""
+}
+$pathEntries = @($cmdDir)
+if ($usingPortableNode) {
+    $pathEntries += @($nodeDir, "$nodeDir\node_modules\npm\bin")
+}
+$existingPathParts = @($userPath -split ';' | Where-Object { $_ })
+$entriesToAdd = @()
+foreach ($entry in $pathEntries) {
+    $normalizedEntry = $entry.TrimEnd('\')
+    $exists = $false
+    foreach ($part in $existingPathParts) {
+        if ($part.TrimEnd('\') -ieq $normalizedEntry) {
+            $exists = $true
+            break
+        }
+    }
+    if (-not $exists) {
+        $entriesToAdd += $entry
+    }
+}
+if ($entriesToAdd.Count -gt 0) {
+    [Environment]::SetEnvironmentVariable("Path", "$($entriesToAdd -join ';');$userPath", "User")
+    Write-Output "Added Codex CLI paths to user PATH: $($entriesToAdd -join ';')"
+}
+$env:Path = "$cmdDir;$env:Path"
+
+if (Test-Path $DOWNLOAD_DIR) {
+    Remove-Item -Recurse -Force $DOWNLOAD_DIR
+    Write-Output "Cleaned installer downloads: $DOWNLOAD_DIR"
+}
+
+Write-Output ""
+Write-Output "Codex CLI installation complete."
+Write-Output "Open a new PowerShell session, then run 'codex login' or configure Codex auth as you normally would."
+Write-Output ""
+`;
+}
+
+function renderCodexUpgradeScript(env) {
+  const r2Base = env.R2_BASE_URL || DEFAULT_R2_BASE;
+  return String.raw`Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$ProgressPreference = 'Continue'
+
+$R2_BASE_URL = "${r2Base}"
+$MIN_NODE_MAJOR = ${CODEX_MIN_NODE_MAJOR}
+
+if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
+    $platform = "win32-arm64"
+} else {
+    $platform = "win32-x64"
+}
+
+function Get-RequiredCommand($name, $message) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $cmd) {
+        Write-Error $message
+        exit 1
+    }
+    return $cmd.Source
+}
+
+function Get-NodeMajorVersion($nodePath) {
+    try {
+        $versionText = (& $nodePath -v).ToString().Trim()
+        if ($versionText -match '^v?(\d+)\.') {
+            return [int]$Matches[1]
+        }
+    }
+    catch {
+        return $null
+    }
+    return $null
+}
+
+$codexCmd = Get-RequiredCommand "codex" "Codex CLI was not found in the current PATH. Run the install script first, then open a new PowerShell session."
+$nodeExe = Get-RequiredCommand "node" "Node.js was not found in the current PATH. The upgrade script does not install Node.js; run the install script first."
+$npmCmd = Get-RequiredCommand "npm" "npm was not found in the current PATH. The upgrade script does not install npm; run the install script first."
+
+$nodeMajor = Get-NodeMajorVersion $nodeExe
+if ($null -eq $nodeMajor -or $nodeMajor -lt $MIN_NODE_MAJOR) {
+    Write-Error "Node.js major version $MIN_NODE_MAJOR or newer is required. Found: $(& $nodeExe -v)"
+    exit 1
+}
+
+$NPM_PREFIX = Split-Path -Parent $codexCmd
+if (-not (Test-Path $NPM_PREFIX)) {
+    Write-Error "Could not determine npm prefix from Codex command: $codexCmd"
+    exit 1
+}
+
+Write-Output "Checking latest Codex CLI version from mirror..."
+$version = (Invoke-RestMethod -Uri "$R2_BASE_URL/codex/latest" -ErrorAction Stop).ToString().Trim()
+Write-Output "Latest version: $version"
+Write-Output "Current Codex command: $codexCmd"
+Write-Output "Using npm prefix: $NPM_PREFIX"
+
+$wrapperTgz = "$R2_BASE_URL/codex/npm/$version/codex-$version.tgz"
+if ($platform -eq "win32-arm64") {
+    $nativePackage = "@openai/codex-win32-arm64@$R2_BASE_URL/codex/npm/$version/codex-$version-win32-arm64.tgz"
+} else {
+    $nativePackage = "@openai/codex-win32-x64@$R2_BASE_URL/codex/npm/$version/codex-$version-win32-x64.tgz"
+}
+
+Write-Output "Upgrading Codex CLI npm packages..."
+& $npmCmd install -g --prefix $NPM_PREFIX --omit=optional $nativePackage $wrapperTgz
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "npm install failed with exit code $LASTEXITCODE"
+    exit $LASTEXITCODE
+}
+
+Write-Output ""
+Write-Output "Codex CLI upgrade complete."
+`;
+}
+
+function renderCodexUninstallScript() {
+  return String.raw`param(
+    [Parameter()]
+    [switch]$RemoveConfig,
+
+    [Parameter()]
+    [switch]$RemoveAuth
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$CODEX_DIR = "$env:USERPROFILE\.codex"
+$DOWNLOAD_DIR = "$CODEX_DIR\downloads"
+$NODE_ROOT = "$CODEX_DIR\node"
+$NPM_PREFIX = "$CODEX_DIR\local"
+$configPath = "$CODEX_DIR\config.toml"
+$authPath = "$CODEX_DIR\auth.json"
+
+Write-Output "Uninstalling Codex CLI local installation..."
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ($userPath) {
+    $parts = $userPath -split ';' | Where-Object {
+        $_ -and
+        ($_.TrimEnd('\') -ne $NPM_PREFIX.TrimEnd('\')) -and
+        ($_.TrimEnd('\') -ne "$NPM_PREFIX\bin".TrimEnd('\')) -and
+        ($_.TrimEnd('\') -ne $NODE_ROOT.TrimEnd('\')) -and
+        ($_.TrimEnd('\') -notlike "$($NODE_ROOT.TrimEnd('\'))\*")
+    }
+    $newPath = ($parts -join ';')
+    if ($newPath -ne $userPath) {
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        Write-Output "Removed Codex CLI paths from user PATH."
+    }
+}
+
+foreach ($path in @($NPM_PREFIX, $NODE_ROOT, $DOWNLOAD_DIR)) {
+    if (Test-Path $path) {
+        Remove-Item -Recurse -Force $path
+        Write-Output "Removed $path"
+    }
+}
+
+if ($RemoveConfig) {
+    if (Test-Path $configPath) {
+        Remove-Item -Force $configPath
+        Write-Output "Removed $configPath"
+    }
+} else {
+    Write-Output "Kept config: $configPath"
+}
+
+if ($RemoveAuth) {
+    if (Test-Path $authPath) {
+        Remove-Item -Force $authPath
+        Write-Output "Removed $authPath"
+    }
+} else {
+    Write-Output "Kept auth: $authPath"
 }
 
 Write-Output ""
