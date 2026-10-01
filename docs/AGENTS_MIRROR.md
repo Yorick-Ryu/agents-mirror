@@ -38,7 +38,7 @@ routes = [
   { pattern = "codex.beiapi.cn/*", zone_name = "beiapi.cn" }
 ]
 
-triggers = { crons = ["20 4 * * MON-SAT", "20 4 * * SUN"] }
+triggers = { crons = [] }
 
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"
@@ -86,14 +86,8 @@ Install script endpoints:
   `%USERPROFILE%\.codex\config.toml` and `auth.json` unless `-RemoveConfig` or
   `-RemoveAuth` are supplied.
 
-The scheduled sync flow runs in two modes:
-
-- Monday through Saturday at `04:20 UTC`: mirror latest metadata, Claude npm
-  tarballs, Codex npm tarballs, and platform `claude.exe` files.
-- Sunday at `04:20 UTC`: run the full sync, including portable Node.js zips
-  and Git for Windows installers.
-
-Manual `/admin/sync` requests still run the full sync.
+Automatic sync is paused (`crons = []`). Existing mirror files and download
+endpoints remain available. Manual `/admin/sync` requests still run the full sync.
 
 The full sync flow:
 

@@ -10,7 +10,7 @@ routes = [
   { pattern = "codex.beiapi.cn/*", zone_name = "beiapi.cn" }
 ]
 
-triggers = { crons = ["20 4 * * MON-SAT", "20 4 * * SUN"] }
+triggers = { crons = [] }
 
 [[r2_buckets]]
 binding = "CLAUDE_RELEASES"

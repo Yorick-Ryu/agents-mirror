@@ -230,7 +230,7 @@ account_id = "YOUR_CLOUDFLARE_ACCOUNT_ID"
 
 workers_dev = false
 
-triggers = { crons = ["20 4 * * MON-SAT", "20 4 * * SUN"] }
+triggers = { crons = [] }
 
 [vars]
 PUBLIC_BASE_URL = "https://claude.example.com"
@@ -291,7 +291,7 @@ wrangler deploy
 - Route：你的 Worker 域名路由
 - Cron：`20 4 * * MON-SAT` 和 `20 4 * * SUN`
 
-定时同步分两种模式：周一到周六 `04:20 UTC` 同步 Claude Code latest、Claude npm tarball、Codex CLI npm tarball 和 `claude.exe`；周日 `04:20 UTC` 额外同步 Node.js zip 和 Git for Windows 安装包。手动 `/admin/sync` 仍会执行完整同步。
+自动同步已暂停（`crons = []`），保留现有镜像和下载服务。手动 `/admin/sync` 仍会执行完整同步。
 
 ### 8. 首次手动同步
 
@@ -403,7 +403,7 @@ git/latest
 - Node.js：`node/{node_version}/`（保留当前配置版本）
 - Git for Windows：`git/{git_version}/`
 
-同步失败不会清理该次尚未发布的资源。清理保留版本索引、非版本对象，以及并发同步中可能出现的更高版本；每日 / 每周同步频率保持不变。历史版本下载不再保证可用。
+同步失败不会清理该次尚未发布的资源。清理保留版本索引、非版本对象，以及并发同步中可能出现的更高版本；自动同步当前已暂停。历史版本下载不再保证可用。
 
 ### 13. 安全注意事项
 
