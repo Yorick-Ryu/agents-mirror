@@ -396,22 +396,14 @@ git/latest
 
 ### 12. 清理逻辑
 
-同步成功后，Worker 会删除旧版本 release 目录：
+每类资源的新版本全部同步成功、更新 `latest` 后，自动清理该类旧版本，只保留当前发布版本的完整平台包：
 
-```text
-claude-code-releases/{old_version}/
-```
+- Claude Code：`claude-code-releases/{version}/` 和 `npm/{version}/`
+- Codex CLI：`codex/npm/{version}/`
+- Node.js：`node/{node_version}/`（保留当前配置版本）
+- Git for Windows：`git/{git_version}/`
 
-当前 Worker 会保留历史 npm、Codex npm、Node.js 和 Git for Windows 对象：
-
-```text
-npm/
-codex/npm/
-node/
-git/
-```
-
-如果你希望 npm、Codex npm、Node.js 或 Git for Windows 历史版本也自动清理，需要在 Worker 中额外加入清理逻辑。
+同步失败不会清理该次尚未发布的资源。清理保留版本索引、非版本对象，以及并发同步中可能出现的更高版本；每日 / 每周同步频率保持不变。历史版本下载不再保证可用。
 
 ### 13. 安全注意事项
 

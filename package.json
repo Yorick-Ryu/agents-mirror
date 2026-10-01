@@ -4,7 +4,8 @@
   "scripts": {
     "deploy": "wrangler deploy",
     "tail": "wrangler tail",
-    "dev": "wrangler dev --remote"
+    "dev": "wrangler dev --remote",
+    "test": "node --test test-retention.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.90.0"

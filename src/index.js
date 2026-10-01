@@ -217,8 +217,9 @@ async function syncLatest(env, options = {}) {
     },
   });
 
-  const deleted = await deleteOldVersions(env, latest);
-  return { ok: true, latest, uploaded, skipped, npm, node, git, deleted, syncedAt: new Date().toISOString() };
+  const deleted = await deleteOldVersions(env, "claude-code-releases/", latest, "claude-code-releases/latest");
+  const npmDeleted = await deleteOldVersions(env, "npm/", latest, "claude-code-releases/latest");
+  return { ok: true, latest, uploaded, skipped, npm, node, git, deleted, npmDeleted, syncedAt: new Date().toISOString() };
 }
 
 async function syncCodexLatest(env, options = {}) {
@@ -245,7 +246,8 @@ async function syncCodexLatest(env, options = {}) {
     },
   });
 
-  return { ok: true, latest, npm, node, git, syncedAt: new Date().toISOString() };
+  const deleted = await deleteOldVersions(env, "codex/npm/", latest, "codex/latest");
+  return { ok: true, latest, npm, node, git, deleted, syncedAt: new Date().toISOString() };
 }
 
 async function syncNpmPackages(env, version, platforms) {
@@ -366,6 +368,7 @@ async function syncNodeZips(env, platforms) {
     customMetadata: { nodeVersion },
   });
 
+  await deleteOldVersions(env, "node/", nodeVersion, "node/latest");
   return results;
 }
 
@@ -402,6 +405,7 @@ async function syncGitForWindows(env, platforms) {
     customMetadata: { version, upstream: installPage },
   });
 
+  await deleteOldVersions(env, "git/", version, "git/latest");
   return results;
 }
 
@@ -508,27 +512,57 @@ async function multipartCopyToR2(env, options) {
   }
 }
 
-async function deleteOldVersions(env, keepVersion) {
-  const prefix = "claude-code-releases/";
+// Only prune a successfully published version family; never remove pointers,
+// unrelated objects, or a newer version uploaded by another sync.
+async function deleteOldVersions(env, prefix, keepVersion, pointerKey) {
+  const pointers = {
+    "claude-code-releases/": "claude-code-releases/latest",
+    "npm/": "claude-code-releases/latest",
+    "codex/npm/": "codex/latest",
+    "node/": "node/latest",
+    "git/": "git/latest",
+  };
+  const versionPattern = /^v?\d+\.\d+\.\d+(?:\.\d+)*$/;
+  if (pointers[prefix] !== pointerKey || !versionPattern.test(keepVersion)) {
+    throw new Error("Invalid mirror retention target");
+  }
+  const publishedVersion = async () => {
+    const object = await env.CLAUDE_RELEASES.get(pointerKey);
+    if (!object) return null;
+    const text = (await object.text()).trim();
+    return pointerKey === "git/latest" ? JSON.parse(text).version : text;
+  };
+  if (await publishedVersion() !== keepVersion) {
+    throw new Error(`Retention pointer changed: ${prefix}`);
+  }
+  const keepParts = keepVersion.replace(/^v/, "").split(".").map(Number);
   const keys = [];
   let cursor;
-
   do {
     const listed = await env.CLAUDE_RELEASES.list({ prefix, cursor });
     for (const object of listed.objects) {
+      if (!object.key.startsWith(prefix)) continue;
       const relative = object.key.slice(prefix.length);
+      if (!relative.includes("/")) continue;
       const version = relative.split("/", 1)[0];
-      if (version && version !== "latest" && version !== keepVersion) {
-        keys.push(object.key);
+      if (!versionPattern.test(version) || version === keepVersion) continue;
+      const parts = version.replace(/^v/, "").split(".").map(Number);
+      let older = false;
+      for (let i = 0; i < Math.max(parts.length, keepParts.length); i++) {
+        if ((parts[i] || 0) === (keepParts[i] || 0)) continue;
+        older = (parts[i] || 0) < (keepParts[i] || 0);
+        break;
       }
+      if (older) keys.push(object.key);
     }
     cursor = listed.truncated ? listed.cursor : undefined;
   } while (cursor);
-
   for (let i = 0; i < keys.length; i += 1000) {
+    if (await publishedVersion() !== keepVersion) {
+      throw new Error(`Retention pointer changed: ${prefix}`);
+    }
     await env.CLAUDE_RELEASES.delete(keys.slice(i, i + 1000));
   }
-
   return keys.length;
 }
 

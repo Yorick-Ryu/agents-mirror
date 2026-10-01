@@ -105,7 +105,7 @@ The full sync flow:
 6. Mirror platform `claude.exe` files with R2 multipart upload.
 7. Write `claude-code-releases/{version}/manifest.json`.
 8. Write `claude-code-releases/latest`.
-9. Delete old version directories under `claude-code-releases/`.
+9. Delete older version directories under `claude-code-releases/` and `npm/` after publishing latest.
 
 The Codex sync flow:
 
@@ -115,10 +115,13 @@ The Codex sync flow:
    under `codex/npm/{version}`.
 3. Write `codex/npm/{version}/manifest.json`.
 4. Write `codex/latest`.
-5. In full sync mode, reuse the shared Node.js and Git for Windows sync steps.
+5. Delete older `codex/npm/` versions after publishing latest.
+6. In full sync mode, reuse the shared Node.js and Git for Windows sync steps.
 
-The Worker currently keeps historical objects under `npm/`, `codex/npm/`,
-`node/`, and `git/`.
+Each resource family retains only its successfully published current version,
+including all configured platforms. Node.js and Git prune after their own
+successful weekly/full sync. Index objects and unrecognized paths are preserved.
+Cleanup checks the published pointer and never removes a numerically newer version.
 
 Installer runtime selection:
 
